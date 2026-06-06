@@ -1,9 +1,6 @@
-# Add project dependencies here, for example:
-# requests==2.31.0
-streamlit==1.32.0
-openpyxl==3.1.2
-python-docx==1.1.0
+streamlit
 openpyxl
+python-docx
 google-generativeai
 Pillow
 streamlit-paste-button
