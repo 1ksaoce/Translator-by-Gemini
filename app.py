@@ -5,20 +5,31 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Mm
 from docx.text.paragraph import Paragraph
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold # THƯ VIỆN BẺ KHÓA KIỂM DUYỆT
 import time
 import io
 import os
 import re
 from PIL import Image
 from streamlit_paste_button import paste_image_button
-import pandas as pd # THƯ VIỆN TẠO BẢNG DANH SÁCH (MỚI)
+import pandas as pd 
+
+# ==========================================
+# BỘ LỌC AN TOÀN - TẮT 100% KIỂM DUYỆT (VÔ CÙNG QUAN TRỌNG)
+# ==========================================
+SAFETY_SETTINGS = {
+    HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+    HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+}
 
 # ==========================================
 # CẤU HÌNH GIAO DIỆN
 # ==========================================
 st.set_page_config(page_title="AI HMI Translator Pro", layout="wide")
 st.title("🌐 Ứng Dụng Dịch Tài Liệu Kỹ Thuật")
-st.markdown("Hệ thống: Dịch File (Chọn Vùng + Máy Quét X-Quang) | **Dịch Ảnh định vị GPS**.")
+st.markdown("Hệ thống: Dịch File (Đã Vô Hiệu Hóa Kiểm Duyệt Từ Ngữ) | **Dịch Ảnh định vị GPS**.")
 
 # ==========================================
 # SIDEBAR: CẤU HÌNH API & ĐIỀU KHIỂN
@@ -59,7 +70,6 @@ with st.sidebar:
 
     st.markdown("---")
     st.header("🎯 Giới Hạn Vùng Dịch")
-    st.info("💡 Bật tính năng này để dịch nhanh 1 đoạn nhỏ trong file.")
     dich_theo_vung = st.toggle("📍 Kích hoạt chọn vùng", value=False)
     
     start_idx = 1
@@ -70,7 +80,7 @@ with st.sidebar:
         with col2: end_idx = st.number_input("Đến đoạn số:", min_value=1, value=100)
 
 # ==========================================
-# CÁC HÀM XỬ LÝ LÕI
+# CÁC HÀM XỬ LÝ LÕI VỚI BÁO CÁO LỖI CHI TIẾT
 # ==========================================
 def is_toc_paragraph(p):
     text = p.text.strip()
@@ -82,15 +92,31 @@ def is_toc_paragraph(p):
     if re.search(r'\t\s*\d+\s*$', text): return True
     return False
 
+def handle_api_error(e, attempt):
+    error_msg = str(e).lower()
+    if "429" in error_msg or "quota" in error_msg or "exhausted" in error_msg:
+        st.toast("⚠️ Google báo quá tải/Hết API. Đang nghỉ 60s...", icon="⏳")
+        time.sleep(60) 
+    elif "safety" in error_msg or "finish_reason" in error_msg:
+        st.toast("🛑 Lỗi Kiểm Duyệt: AI từ chối dịch từ ngữ kỹ thuật nhạy cảm!", icon="🚫")
+        time.sleep(2)
+    else:
+        st.toast(f"Lỗi API ({str(e)[:30]}). Thử lại lần {attempt+1}...", icon="🔄")
+        time.sleep(5)
+
 def translate_text_core(text, model_name):
     prompt = f"Dịch đoạn văn bản kỹ thuật sau từ tiếng Trung sang tiếng Việt. KHÔNG giải thích. GIỮ NGUYÊN mã lỗi.\nGốc:\n{text}\nDịch:"
     model = genai.GenerativeModel(model_name)
-    for _ in range(2):
+    
+    for attempt in range(4):
         try:
-            res = model.generate_content(prompt)
-            time.sleep(2)
+            # GỌI API CÙNG LỆNH BỎ KIỂM DUYỆT
+            res = model.generate_content(prompt, safety_settings=SAFETY_SETTINGS)
+            time.sleep(4.5) 
             if res.text: return res.text.replace("Bản dịch tiếng Việt:", "").strip()
-        except Exception: time.sleep(10)
+        except Exception as e:
+            handle_api_error(e, attempt)
+            
     return text
 
 def translate_batch_core(texts, model_name):
@@ -101,30 +127,32 @@ def translate_batch_core(texts, model_name):
     combined_text = delimiter.join(texts)
     
     prompt = f"""Bạn là chuyên gia dịch thuật tài liệu kỹ thuật. Dịch văn bản sau từ tiếng Trung sang tiếng Việt.
-YÊU CẦU:
-1. Có {len(texts)} đoạn riêng biệt được phân tách bằng dấu |||
-2. Bạn PHẢI xuất ra chính xác {len(texts)} đoạn dịch, và PHẢI giữ nguyên dấu ||| ở giữa các đoạn. KHÔNG ĐƯỢC GỘP ĐOẠN.
+YÊU CẦU BẮT BUỘC:
+1. Có {len(texts)} đoạn được phân tách bằng dấu |||
+2. Trả về đúng {len(texts)} đoạn, giữ nguyên dấu ||| ở giữa. KHÔNG GỘP ĐOẠN.
 3. Không giải thích.
 
 Văn bản gốc:
 {combined_text}"""
 
     model = genai.GenerativeModel(model_name)
-    for _ in range(2):
+    for attempt in range(3):
         try:
-            response = model.generate_content(prompt)
-            time.sleep(3)
+            # GỌI API CÙNG LỆNH BỎ KIỂM DUYỆT
+            response = model.generate_content(prompt, safety_settings=SAFETY_SETTINGS)
+            time.sleep(4.5) 
             if response.text:
                 chunks = [c.strip() for c in response.text.strip().split("|||")]
                 if len(chunks) == len(texts): return chunks
                 else: break 
-        except Exception: time.sleep(10)
+        except Exception as e:
+            handle_api_error(e, attempt)
             
-    st.toast("⚠️ Tự động rã nhóm để dịch an toàn...", icon="🔧")
+    st.toast("⚠️ Rã nhóm dịch để xử lý từng câu an toàn...", icon="🔧")
     return [translate_text_core(t, model_name) for t in texts]
 
 # ==========================================
-# XỬ LÝ FILE WORD VỚI CHỌN VÙNG VÀ BATCHING
+# XỬ LÝ FILE WORD
 # ==========================================
 def process_word(file_bytes, model_name, progress_bar, status_text, preview_box, file_name):
     doc = docx.Document(io.BytesIO(file_bytes))
@@ -173,7 +201,7 @@ def process_word(file_bytes, model_name, progress_bar, status_text, preview_box,
         st.warning(f"Không có văn bản nào trong khoảng từ đoạn {start_idx} đến {end_idx}!")
         return file_bytes
         
-    status_text.info(f"📊 Tổng số đoạn trong File: {total_doc_items}. Máy sẽ dịch: {total_targets} đoạn.")
+    status_text.info(f"📊 Tổng: {total_doc_items} đoạn. Đang dịch vùng mục tiêu: {total_targets} đoạn.")
     
     processed = 0
     for i in range(0, total_targets, batch_size):
@@ -200,7 +228,7 @@ def process_word(file_bytes, model_name, progress_bar, status_text, preview_box,
             original = item['text']
             translated = item['translated']
             
-            preview_box.success(f"**Đã xử lý đoạn {actual_start + processed + 1}/{total_doc_items} của toàn file:**\n\n🇨🇳 `{original}`\n\n🇻🇳 `{translated}`")
+            preview_box.success(f"**Đã xử lý đoạn {actual_start + processed + 1}/{total_doc_items} toàn file:**\n\n🇨🇳 `{original}`\n\n🇻🇳 `{translated}`")
             p.clear() 
             p.add_run(translated)
             format_paragraph(p, is_body_text=(item['type'] == 'para'))
@@ -219,11 +247,10 @@ def process_word(file_bytes, model_name, progress_bar, status_text, preview_box,
         except: pass
     return output.getvalue()
 
-# (Giữ nguyên process_excel tương tự, chỉ áp dụng bộ lọc)
+# (GIỮ NGUYÊN HÀM EXCEL)
 def process_excel(file_bytes, model_name, progress_bar, status_text, preview_box, file_name):
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
     autosave_filename = f"autosave_{file_name}"
-    
     cells_to_process = []
     for sheet in wb.worksheets:
         for row in sheet.iter_rows():
@@ -231,16 +258,12 @@ def process_excel(file_bytes, model_name, progress_bar, status_text, preview_box
                 val = cell.value
                 if isinstance(val, str) and not val.startswith('=') and val.strip():
                     cells_to_process.append(cell)
-                    
     total_doc_cells = len(cells_to_process)
     if total_doc_cells == 0: return file_bytes
-    
     actual_start = max(0, start_idx - 1) if dich_theo_vung else 0
     actual_end = end_idx if (dich_theo_vung and end_idx > 0) else total_doc_cells
     target_cells = cells_to_process[actual_start:actual_end]
     total_targets = len(target_cells)
-    
-    status_text.info(f"📊 Tổng số ô trong File: {total_doc_cells}. Máy sẽ dịch: {total_targets} ô mục tiêu.")
     
     processed = 0
     for cell in target_cells:
@@ -250,22 +273,18 @@ def process_excel(file_bytes, model_name, progress_bar, status_text, preview_box
         else:
             translated = translate_text_core(val, model_name)
             preview_box.success(f"**Đang dịch Ô {actual_start + processed + 1}/{total_doc_cells}:**\n\n🇨🇳 `{val}`\n\n🇻🇳 `{translated}`")
-            
         cell.value = translated
         processed += 1
         progress_bar.progress(processed / total_targets)
-        
         if processed % 10 == 0:
             try: wb.save(autosave_filename)
             except: pass
-
     output = io.BytesIO()
     wb.save(output)
     if os.path.exists(autosave_filename):
         try: os.remove(autosave_filename) 
         except: pass
     return output.getvalue()
-
 
 # ==========================================
 # CHIA TAB GIAO DIỆN
@@ -293,10 +312,8 @@ with tab1:
         file_bytes = uploaded_file.read()
         file_ext = os.path.splitext(uploaded_file.name)[1].lower()
         
-        # MÁY QUÉT X-QUANG: XEM TRƯỚC VỊ TRÍ ĐOẠN VĂN
         if file_ext == '.docx':
             with st.expander("🔍 Bấm vào đây để SOI VỊ TRÍ các đoạn văn trong file Word"):
-                st.info("💡 Lướt danh sách dưới đây để biết đoạn bạn cần dịch nằm ở số thứ mấy, sau đó điền vào mục 'Giới Hạn Vùng Dịch' bên menu trái.")
                 if st.button("Hiển thị danh sách đoạn"):
                     doc_preview = docx.Document(io.BytesIO(file_bytes))
                     paras_preview = []
@@ -305,18 +322,13 @@ with tab1:
                         p = Paragraph(p_xml, doc_preview)
                         text = p.text.strip()
                         if text and p not in seen_paras_preview and not is_toc_paragraph(p):
-                            is_in_shape = len(p_xml.xpath('ancestor::w:txbxContent')) > 0
-                            if skip_shapes and is_in_shape: continue
+                            if skip_shapes and len(p_xml.xpath('ancestor::w:txbxContent')) > 0: continue
                             paras_preview.append(text)
                             seen_paras_preview.add(p)
                     
-                    df = pd.DataFrame({
-                        "Đoạn số": range(1, len(paras_preview) + 1),
-                        "Nội dung tiếng Trung": [t[:100] + "..." if len(t) > 100 else t for t in paras_preview]
-                    })
+                    df = pd.DataFrame({"Đoạn số": range(1, len(paras_preview) + 1), "Nội dung": [t[:100] + "..." if len(t) > 100 else t for t in paras_preview]})
                     st.dataframe(df, use_container_width=True, hide_index=True)
         
-        # NÚT BẮT ĐẦU DỊCH
         if st.button("🚀 Bắt Đầu Dịch File", use_container_width=True):
             progress_bar = st.progress(0)
             status_text = st.empty()
@@ -352,5 +364,6 @@ with tab2:
         if st.button("🔍 TIẾN HÀNH DỊCH & ĐỊNH VỊ", type="primary", use_container_width=True):
             with st.spinner("AI đang quét ảnh..."):
                 model = genai.GenerativeModel(selected_model_name)
-                res = model.generate_content(["Trích xuất và dịch chữ tiếng Trung trong ảnh. Trình bày dạng danh sách: - [Vị trí tương đối] Tiếng Trung -> Tiếng Việt", img_to_process])
+                # THÊM BỎ LỌC AN TOÀN CHO CẢ PHẦN ẢNH ĐỂ TRÁNH BỊ CHẶN LƯU ĐỒ MẠCH
+                res = model.generate_content(["Trích xuất và dịch chữ tiếng Trung trong ảnh. Trình bày dạng danh sách: - [Vị trí tương đối] Tiếng Trung -> Tiếng Việt", img_to_process], safety_settings=SAFETY_SETTINGS)
                 st.code(res.text, language="markdown")
