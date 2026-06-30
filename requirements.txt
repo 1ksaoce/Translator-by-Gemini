@@ -1,6 +1,9 @@
 streamlit
 openpyxl
 python-docx
+python-pptx
+pdf2docx
 google-generativeai
 Pillow
 streamlit-paste-button
+pandas
