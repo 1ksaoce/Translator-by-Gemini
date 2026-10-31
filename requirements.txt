@@ -3,6 +3,10 @@ openpyxl
 python-docx
 python-pptx
 pdf2docx
+pymupdf
+lxml
+opencv-python-headless
+numpy
 google-generativeai
 Pillow
 streamlit-paste-button
