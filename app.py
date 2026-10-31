@@ -1,11 +1,17 @@
 import io
 import os
+import sys
 import time
 import streamlit as st
 import pandas as pd
 from PIL import Image
 from streamlit_paste_button import paste_image_button
 import google.generativeai as genai
+
+# Đảm bảo Python luôn tìm thấy thư mục modules/ trên cả Windows lẫn Streamlit Cloud
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 
 from modules.translator import (
     LANG_MODES,
@@ -49,16 +55,18 @@ st.markdown(
     "Hỗ trợ: **Word, Excel, PowerPoint, PDF, Hình Ảnh** | "
     "Đa Ngôn Ngữ | Bảo Toàn 100% Bố Cục & Tự Động Căn Chỉnh Khung."
 )
+
 st.markdown(
     "Ứng dụng thuộc sở hữu của : **Đức Nguyễn**"
 
     "  --- Email: ndinhduc612@gmail.com"
 )
+
 # ==========================================
 # SIDEBAR & MENU CÔNG CỤ
 # ==========================================
 with st.sidebar:
-    st.header("🔑 Cấu Hình Hệ Thống (3 API)")
+    st.header("🔑 Cấu Hình Hệ Thống")
 
     def _get_secret_key(*names):
         for n in names:
@@ -70,48 +78,44 @@ with st.sidebar:
                 pass
         return ""
 
-    default_k1 = _get_secret_key("GEMINI_API_KEY_1", "GEMINI_API_KEY")
-    default_k2 = _get_secret_key("GEMINI_API_KEY_2")
-    default_k3 = _get_secret_key("GEMINI_API_KEY_3")
+    # Đọc 3 API Key ẩn hoàn toàn trong后台 (Backend st.secrets), TUYỆT ĐỐI KHÔNG đưa vào ô input để lộ cho người dùng
+    secret_k1 = _get_secret_key("GEMINI_API_KEY_1", "GEMINI_API_KEY")
+    secret_k2 = _get_secret_key("GEMINI_API_KEY_2")
+    secret_k3 = _get_secret_key("GEMINI_API_KEY_3")
 
-    api_slot_labels = [
-        "🔑 API Key 1 (Chính)",
-        "🔑 API Key 2 (Dự phòng 1)",
-        "🔑 API Key 3 (Dự phòng 2)",
-    ]
-    selected_api_slot = st.radio(
-        "🎯 Chọn nguồn API sử dụng:",
-        options=api_slot_labels,
-        index=0,
-        help="Chọn API Key chính để dịch. Nếu bạn nhập cả 3 API Key, hệ thống sẽ tự động xoay vòng sang API tiếp theo ngay khi API đang dùng bị lỗi hoặc hết hạn mức!",
-    )
-    preferred_api_idx = api_slot_labels.index(selected_api_slot)
+    has_server_secrets = bool(secret_k1 or secret_k2 or secret_k3)
 
-    with st.expander("🔐 Nhập / Thay đổi 3 API Key", expanded=not bool(default_k1 or default_k2 or default_k3)):
-        api_key_1 = st.text_input(
-            "API Key 1:",
-            value=default_k1,
-            type="password",
-            key="input_api_key_1",
+    if has_server_secrets:
+        api_slot_labels = [
+            "🔑 Máy chủ API 1 (Chính)",
+            "🔑 Máy chủ API 2 (Dự phòng 1)",
+            "🔑 Máy chủ API 3 (Dự phòng 2)",
+        ]
+        selected_api_slot = st.radio(
+            "🎯 Chọn kênh kết nối API:",
+            options=api_slot_labels,
+            index=0,
+            help="Chọn kênh API để dịch. Hệ thống sẽ tự động chuyển sang kênh dự phòng nếu kênh đang chọn bị quá tải hoặc hết hạn mức (Mã API được bảo mật 100% trên máy chủ).",
         )
-        api_key_2 = st.text_input(
-            "API Key 2 (Dự phòng):",
-            value=default_k2,
+        preferred_api_idx = api_slot_labels.index(selected_api_slot)
+        key_entries = [
+            {"label": "Máy chủ API 1", "key": secret_k1},
+            {"label": "Máy chủ API 2", "key": secret_k2},
+            {"label": "Máy chủ API 3", "key": secret_k3},
+        ]
+    else:
+        # Chỉ hiển thị ô nhập trống nếu trên hệ thống chưa cấu hình st.secrets
+        user_custom_key = st.text_input(
+            "Nhập Google Gemini API Key:",
+            value="",
             type="password",
-            key="input_api_key_2",
+            help="Hệ thống chưa có API cấu hình sẵn. Vui lòng nhập API Key của bạn.",
         )
-        api_key_3 = st.text_input(
-            "API Key 3 (Dự phòng):",
-            value=default_k3,
-            type="password",
-            key="input_api_key_3",
-        )
+        preferred_api_idx = 0
+        key_entries = [
+            {"label": "API Cá nhân", "key": user_custom_key},
+        ]
 
-    key_entries = [
-        {"label": "API Key 1", "key": api_key_1},
-        {"label": "API Key 2", "key": api_key_2},
-        {"label": "API Key 3", "key": api_key_3},
-    ]
     active_api_key = configure_api_keys_pool(key_entries, preferred_idx=preferred_api_idx)
     available_key_count = sum(1 for x in key_entries if x["key"].strip())
 
@@ -125,7 +129,7 @@ with st.sidebar:
             ]
             if available_models:
                 st.success(
-                    f"✅ Đang dùng: **{get_active_api_label()}** (Đã nạp {available_key_count}/3 API sẵn sàng tự động dự phòng)"
+                    f"✅ Đang kết nối: **{get_active_api_label()}** ({available_key_count} kênh API bảo mật sẵn sàng)"
                 )
                 default_idx = 0
                 for i, m_name in enumerate(available_models):
@@ -143,7 +147,7 @@ with st.sidebar:
                 index=0,
             )
     else:
-        st.warning("⚠️ Vui lòng nhập ít nhất 1 Gemini API Key ở mục trên.")
+        st.warning("⚠️ Chưa có API Key hợp lệ trong hệ thống.")
 
     st.markdown("---")
     st.header("🌍 Chế Độ Ngôn Ngữ Dịch")
