@@ -49,7 +49,11 @@ st.markdown(
     "Hỗ trợ: **Word, Excel, PowerPoint, PDF, Hình Ảnh** | "
     "Đa Ngôn Ngữ | Bảo Toàn 100% Bố Cục & Tự Động Căn Chỉnh Khung."
 )
+st.markdown(
+    "Ứng dụng thuộc sở hữu của : **Đức Nguyễn**"
 
+    "  --- Email: ndinhduc612@gmail.com"
+)
 # ==========================================
 # SIDEBAR & MENU CÔNG CỤ
 # ==========================================
