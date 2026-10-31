@@ -171,7 +171,7 @@ with st.sidebar:
     )
     skip_shapes = st.toggle(
         "⏭️ Bỏ qua chữ trong Lưu đồ & Hình ảnh",
-        value=False,
+        value=True,
         help="Khi BẬT: Giữ nguyên 100% lưu đồ và hình ảnh trong Word/PDF/Excel mà không đụng vào chữ bên trong. Khi TẮT: Tự động quét & dịch chữ trực tiếp ngay trên hình ảnh/bản vẽ đính kèm (xóa chữ cũ, chèn chữ đã dịch)!",
     )
 
